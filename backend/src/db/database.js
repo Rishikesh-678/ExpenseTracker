@@ -54,6 +54,7 @@ function initDb() {
       file_path TEXT,
       file_name TEXT,
       po_number TEXT,
+      vendor_name TEXT,
       fiscal_year TEXT NOT NULL DEFAULT 'FY2024-25',
       submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
       reviewed_by INTEGER,
@@ -106,6 +107,7 @@ function initDb() {
 
   // Migrations for existing databases
   try { database.exec(`ALTER TABLE expenses ADD COLUMN po_number TEXT`); } catch (_) {}
+  try { database.exec(`ALTER TABLE expenses ADD COLUMN vendor_name TEXT`); } catch (_) {}
   try { database.exec(`ALTER TABLE expenses ADD COLUMN fiscal_year TEXT NOT NULL DEFAULT 'FY2024-25'`); } catch (_) {}
   try { database.exec(`ALTER TABLE budget ADD COLUMN fiscal_year TEXT NOT NULL DEFAULT 'FY2024-25'`); } catch (_) {}
 

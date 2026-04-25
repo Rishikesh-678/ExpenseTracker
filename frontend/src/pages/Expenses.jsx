@@ -22,7 +22,7 @@ export default function Expenses() {
   const [filter, setFilter] = useState({ status: initialStatus, category: '' });
   const [submitting, setSubmitting] = useState(false);
   const [categories, setCategories] = useState([]);
-  const [form, setForm] = useState({ category: '', description: '', amount: '', date: '', po_number: '' });
+  const [form, setForm] = useState({ category: '', description: '', amount: '', date: '', po_number: '', vendor_name: '' });
   const [showCustom, setShowCustom] = useState(false);
   const [customCatInput, setCustomCatInput] = useState('');
   const [addingCat, setAddingCat] = useState(false);
@@ -84,7 +84,7 @@ export default function Expenses() {
     try {
       await expensesApi.submit(fd);
       setSubmitMsg('Expense submitted successfully!');
-      setForm(p => ({ ...p, description: '', amount: '', date: '', po_number: '' }));
+      setForm(p => ({ ...p, description: '', amount: '', date: '', po_number: '', vendor_name: '' }));
       setFile(null);
       load(); refreshNotifs();
     } catch (err) {
@@ -145,6 +145,10 @@ export default function Expenses() {
               <div className="form-group">
                 <label>Date *</label>
                 <input type="date" value={form.date} onChange={e=>setForm(p=>({...p,date:e.target.value}))} required/>
+              </div>
+              <div className="form-group">
+                <label>Vendor Name <span style={{fontWeight:400,color:'var(--text3)'}}>(optional)</span></label>
+                <input type="text" value={form.vendor_name} onChange={e=>setForm(p=>({...p,vendor_name:e.target.value}))} placeholder="e.g. Dell India Pvt. Ltd." maxLength={100}/>
               </div>
               <div className="form-group">
                 <label>PO Number <span style={{fontWeight:400,color:'var(--text3)'}}>(optional)</span></label>
@@ -209,6 +213,7 @@ export default function Expenses() {
                   {isAdmin && <td style={{fontWeight:500}}>{e.user_name}</td>}
                   <td>
                     <div style={{fontWeight:500}}>{e.description}</div>
+                    {e.vendor_name && <div style={{fontSize:11,color:'var(--blue)',marginTop:3}}>🏪 {e.vendor_name}</div>}
                     {e.po_number && <div style={{fontSize:11,color:'var(--accent2)',marginTop:3}}>🏷️ PO: {e.po_number}</div>}
                     {e.status === 'rejected' && e.rejection_reason && <div style={{fontSize:11,color:'var(--red)',marginTop:3}}>Reason: {e.rejection_reason}</div>}
                     {e.file_name && <div style={{fontSize:11,color:'var(--text3)',marginTop:3}}>📎 {e.file_name}</div>}

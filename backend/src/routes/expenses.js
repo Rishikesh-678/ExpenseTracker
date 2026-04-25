@@ -27,7 +27,7 @@ const upload = multer({
 
 // Submit expense
 router.post('/', requireAuth, upload.single('invoice'), (req, res) => {
-  const { category, description, amount, date, po_number } = req.body;
+  const { category, description, amount, date, po_number, vendor_name } = req.body;
   if (!category || !description || !amount || !date) {
     return res.status(400).json({ error: 'Category, description, amount, and date are required' });
   }
@@ -37,12 +37,13 @@ router.post('/', requireAuth, upload.single('invoice'), (req, res) => {
   if (!validCat) return res.status(400).json({ error: 'Invalid or inactive category' });
   const fiscalYear = getFYForDate(date);
   const result = db.prepare(`
-    INSERT INTO expenses (user_id,category,description,amount,date,file_path,file_name,po_number,fiscal_year)
-    VALUES (?,?,?,?,?,?,?,?,?)
+    INSERT INTO expenses (user_id,category,description,amount,date,file_path,file_name,po_number,vendor_name,fiscal_year)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
   `).run(req.user.id, category, description, parseFloat(amount), date,
     req.file ? req.file.filename : null,
     req.file ? req.file.originalname : null,
     po_number ? po_number.trim() : null,
+    vendor_name ? vendor_name.trim() : null,
     fiscalYear);
 
   const admins = db.prepare('SELECT id FROM users WHERE role=? AND is_active=1').all('admin');
@@ -53,7 +54,7 @@ router.post('/', requireAuth, upload.single('invoice'), (req, res) => {
 
   db.prepare('INSERT INTO audit_logs (actor_id,actor_name,action,target_type,target_id,details) VALUES (?,?,?,?,?,?)').run(
     req.user.id, req.user.name, 'EXPENSE_SUBMITTED', 'expense', result.lastInsertRowid,
-    JSON.stringify({ category, description, amount: parseFloat(amount), date, po_number: po_number || null })
+    JSON.stringify({ category, description, amount: parseFloat(amount), date, po_number: po_number || null, vendor_name: vendor_name || null })
   );
 
   res.status(201).json({ message: 'Expense submitted', expense: db.prepare('SELECT * FROM expenses WHERE id=?').get(result.lastInsertRowid) });
