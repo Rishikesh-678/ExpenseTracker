@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { usersApi } from '../api';
+import { useAuth } from '../context/AuthContext';
 
-function UserModal({ user, onClose, onSave }) {
+function UserModal({ user, isSelf, onClose, onSave }) {
   const editing = !!user;
   const [form, setForm] = useState({ name: user?.name||'', email: user?.email||'', password: '', role: user?.role||'user', is_active: user?.is_active!==undefined ? user.is_active : 1 });
   const [loading, setLoading] = useState(false);
@@ -23,8 +24,8 @@ function UserModal({ user, onClose, onSave }) {
           {!editing && <div className="form-group"><label>Email</label><input type="email" value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))} placeholder="john@company.com"/></div>}
           <div className="form-group"><label>{editing ? 'New Password (leave blank to keep)' : 'Password *'}</label><input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} placeholder="••••••••"/></div>
           <div className="form-group">
-            <label>Role</label>
-            <select value={form.role} onChange={e=>setForm(p=>({...p,role:e.target.value}))}>
+            <label>Role {editing && isSelf && <span style={{fontSize:11,color:'var(--red)',marginLeft:6}}>Cannot change own role</span>}</label>
+            <select value={form.role} onChange={e=>setForm(p=>({...p,role:e.target.value}))} disabled={editing && isSelf}>
               <option value="user">Team Member</option>
               <option value="admin">Administrator</option>
             </select>
@@ -49,6 +50,7 @@ function UserModal({ user, onClose, onSave }) {
 }
 
 export default function Users() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // null | 'create' | user-object
@@ -72,8 +74,12 @@ export default function Users() {
 
   const deactivate = async (id) => {
     if (!confirm('Deactivate this user?')) return;
-    await usersApi.remove(id);
-    load();
+    try { await usersApi.remove(id); load(); } catch (e) { alert(e.response?.data?.error || 'Error'); }
+  };
+
+  const reactivate = async (u) => {
+    if (!confirm(`Reactivate ${u.name}?`)) return;
+    try { await usersApi.update(u.id, { is_active: 1 }); load(); } catch (e) { alert(e.response?.data?.error || 'Error'); }
   };
 
   return (
@@ -100,7 +106,10 @@ export default function Users() {
                   <td>
                     <div style={{display:'flex',gap:6}}>
                       <button className="btn btn-ghost btn-sm" onClick={() => setModal(u)}>Edit</button>
-                      {u.is_active ? <button className="btn btn-red btn-sm" onClick={() => deactivate(u.id)}>Deactivate</button> : null}
+                      {u.is_active
+                        ? <button className="btn btn-red btn-sm" onClick={() => deactivate(u.id)}>Deactivate</button>
+                        : <button className="btn btn-green btn-sm" onClick={() => reactivate(u)}>Reactivate</button>
+                      }
                     </div>
                   </td>
                 </tr>
@@ -109,7 +118,7 @@ export default function Users() {
           </table>
         )}
       </div>
-      {modal && <UserModal user={modal === 'create' ? null : modal} onClose={() => setModal(null)} onSave={handleSave}/>}
+      {modal && <UserModal user={modal === 'create' ? null : modal} isSelf={modal !== 'create' && modal?.id === currentUser?.id} onClose={() => setModal(null)} onSave={handleSave}/>}
     </div>
   );
 }

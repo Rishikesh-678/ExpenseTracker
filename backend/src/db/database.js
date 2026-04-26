@@ -19,6 +19,10 @@ function getDb() {
   return db;
 }
 
+function getActiveAdminCount(database = getDb()) {
+  return database.prepare("SELECT COUNT(*) as c FROM users WHERE role='admin' AND is_active=1").get().c;
+}
+
 function initDb() {
   const database = getDb();
 
@@ -46,7 +50,7 @@ function initDb() {
     CREATE TABLE IF NOT EXISTS expenses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
-      category TEXT NOT NULL CHECK(category IN ('Hardware','Software License','Cloud Billing','Miscellaneous')),
+      category TEXT NOT NULL,
       description TEXT NOT NULL,
       amount REAL NOT NULL,
       date TEXT NOT NULL,
@@ -60,6 +64,10 @@ function initDb() {
       reviewed_by INTEGER,
       reviewed_at TEXT,
       rejection_reason TEXT,
+      reference_link TEXT,
+      expense_type TEXT,
+      business_line TEXT,
+      project TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id),
       FOREIGN KEY (reviewed_by) REFERENCES users(id)
     );
@@ -103,6 +111,32 @@ function initDb() {
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS expense_update_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      expense_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      description TEXT NOT NULL,
+      amount REAL NOT NULL,
+      date TEXT NOT NULL,
+      file_path TEXT,
+      file_name TEXT,
+      po_number TEXT,
+      vendor_name TEXT,
+      fiscal_year TEXT NOT NULL DEFAULT 'FY2024-25',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+      submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+      reviewed_by INTEGER,
+      reviewed_at TEXT,
+      rejection_reason TEXT,
+      reference_link TEXT,
+      business_line TEXT,
+      project TEXT,
+      FOREIGN KEY (expense_id) REFERENCES expenses(id),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (reviewed_by) REFERENCES users(id)
+    );
   `);
 
   // Migrations for existing databases
@@ -110,6 +144,13 @@ function initDb() {
   try { database.exec(`ALTER TABLE expenses ADD COLUMN vendor_name TEXT`); } catch (_) {}
   try { database.exec(`ALTER TABLE expenses ADD COLUMN fiscal_year TEXT NOT NULL DEFAULT 'FY2024-25'`); } catch (_) {}
   try { database.exec(`ALTER TABLE budget ADD COLUMN fiscal_year TEXT NOT NULL DEFAULT 'FY2024-25'`); } catch (_) {}
+  try { database.exec(`ALTER TABLE expenses ADD COLUMN reference_link TEXT`); } catch (_) {}
+  try { database.exec(`ALTER TABLE expenses ADD COLUMN expense_type TEXT`); } catch (_) {}
+  try { database.exec(`ALTER TABLE expenses ADD COLUMN business_line TEXT`); } catch (_) {}
+  try { database.exec(`ALTER TABLE expenses ADD COLUMN project TEXT`); } catch (_) {}
+  try { database.exec(`ALTER TABLE expense_update_requests ADD COLUMN reference_link TEXT`); } catch (_) {}
+  try { database.exec(`ALTER TABLE expense_update_requests ADD COLUMN business_line TEXT`); } catch (_) {}
+  try { database.exec(`ALTER TABLE expense_update_requests ADD COLUMN project TEXT`); } catch (_) {}
 
   // Create access_logs for existing DBs that don't have it yet
   try {
@@ -122,6 +163,37 @@ function initDb() {
         ip_address TEXT,
         user_agent TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+  } catch (_) {}
+
+  // Ensure expense_update_requests table exists for existing databases
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS expense_update_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        expense_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        category TEXT NOT NULL,
+        description TEXT NOT NULL,
+        amount REAL NOT NULL,
+        date TEXT NOT NULL,
+        file_path TEXT,
+        file_name TEXT,
+        po_number TEXT,
+        vendor_name TEXT,
+        fiscal_year TEXT NOT NULL DEFAULT 'FY2024-25',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+        submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+        reviewed_by INTEGER,
+        reviewed_at TEXT,
+        rejection_reason TEXT,
+        reference_link TEXT,
+        business_line TEXT,
+        project TEXT,
+        FOREIGN KEY (expense_id) REFERENCES expenses(id),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (reviewed_by) REFERENCES users(id)
       )
     `);
   } catch (_) {}
@@ -164,6 +236,7 @@ function initDb() {
             file_path TEXT,
             file_name TEXT,
             po_number TEXT,
+            vendor_name TEXT,
             fiscal_year TEXT NOT NULL DEFAULT 'FY2024-25',
             submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
             reviewed_by INTEGER,
@@ -173,7 +246,7 @@ function initDb() {
         `);
         database.exec(`INSERT INTO expenses_v2
           SELECT id, user_id, category, description, amount, date, status,
-                 file_path, file_name, po_number,
+                 file_path, file_name, po_number, vendor_name,
                  COALESCE(fiscal_year, 'FY2024-25'),
                  submitted_at, reviewed_by, reviewed_at, rejection_reason
           FROM expenses
@@ -207,6 +280,7 @@ function initDb() {
   for (const cat of defaults) insCategory.run(cat);
 
   seedData(database);
+  ensureAdminExists(database);
   return database;
 }
 
@@ -230,8 +304,8 @@ function seedData(database) {
   ).run('Bob Smith', 'bob@netops.com', bobHash, 'user').lastInsertRowid;
 
   database.prepare(
-    'INSERT INTO budget (total_budget, updated_by, notes) VALUES (?,?,?)'
-  ).run(50000, adminId, 'Initial FY2024 department budget');
+    'INSERT INTO budget (total_budget, updated_by, fiscal_year, notes) VALUES (?,?,?,?)'
+  ).run(50000, adminId, getCurrentFY(), 'Initial department budget');
 
   const ins = database.prepare(`
     INSERT INTO expenses (user_id,category,description,amount,date,status,reviewed_by,reviewed_at,rejection_reason)
@@ -270,4 +344,24 @@ function seedData(database) {
   console.log('✅ Database seeded with sample data');
 }
 
-module.exports = { getDb, initDb };
+function ensureAdminExists(database) {
+  if (getActiveAdminCount(database) > 0) return;
+
+  const adminEmail = 'admin@netops.com';
+  const existingAdmin = database.prepare('SELECT id FROM users WHERE email=?').get(adminEmail);
+
+  if (existingAdmin) {
+    database.prepare('UPDATE users SET role=?, is_active=1 WHERE id=?').run('admin', existingAdmin.id);
+    console.log('✅ Restored the default admin account');
+    return;
+  }
+
+  const adminHash = bcrypt.hashSync('Admin@123', 10);
+  database.prepare(
+    'INSERT INTO users (name, email, password_hash, role) VALUES (?,?,?,?)'
+  ).run('Admin User', adminEmail, adminHash, 'admin');
+
+  console.log('✅ Recreated the default admin account');
+}
+
+module.exports = { getDb, getActiveAdminCount, initDb };

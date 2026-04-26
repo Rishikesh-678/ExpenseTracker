@@ -24,8 +24,6 @@ export default function Login() {
     }
   };
 
-  const fillDemo = (e, pw) => { setEmail(e); setPassword(pw); };
-
   return (
     <div className="login-page">
       <div className="login-card">
@@ -47,19 +45,6 @@ export default function Login() {
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
-        <div className="demo-accounts">
-          <p>Demo Accounts</p>
-          <div className="demo-creds">
-            <button type="button" className="demo-cred-btn" onClick={() => fillDemo('admin@netops.com','Admin@123')}>
-              <span>Administrator</span>
-              <p>admin@netops.com · Admin@123</p>
-            </button>
-            <button type="button" className="demo-cred-btn" onClick={() => fillDemo('alice@netops.com','User@123')}>
-              <span>Team Member</span>
-              <p>alice@netops.com · User@123</p>
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

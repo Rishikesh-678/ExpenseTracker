@@ -156,6 +156,17 @@ label { font-size: 12px; font-weight: 600; color: var(--text2); }
 input, select, textarea { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--text); font-family: inherit; transition: border-color .2s; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
 input::placeholder { color: var(--text3); }
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+input[type='date'] {
+  cursor: pointer;
+}
 select option { background: var(--bg2); }
 textarea { resize: vertical; min-height: 80px; }
 .file-input-wrap { border: 2px dashed var(--border); border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; transition: border-color .2s; }
@@ -201,6 +212,29 @@ textarea { resize: vertical; min-height: 80px; }
 .demo-cred-btn:hover { border-color: var(--accent); }
 .demo-cred-btn span { font-size: 11px; font-weight: 600; color: var(--accent2); display: block; margin-bottom: 2px; }
 .demo-cred-btn p { font-size: 11px; color: var(--text3); }
+
+/* Budget card expand animation */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Expense card grid */
+.expense-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 30px rgba(0,0,0,.45);
+  border-color: var(--accent);
+}
+
+/* Drawer animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
 
 /* Loader */
 .loader { display: flex; align-items: center; justify-content: center; height: 200px; }

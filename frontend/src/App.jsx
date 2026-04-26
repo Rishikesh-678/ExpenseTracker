@@ -9,6 +9,8 @@ import Approvals from './pages/Approvals';
 import Users from './pages/Users';
 import AuditLog from './pages/AuditLog';
 import Reports from './pages/Reports';
+import Profile from './pages/Profile';
+import NotFound from './pages/NotFound';
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, loading } = useAuth();
@@ -31,8 +33,9 @@ function AppRoutes() {
         <Route path="users" element={<ProtectedRoute adminOnly><Users /></ProtectedRoute>} />
         <Route path="audit" element={<ProtectedRoute adminOnly><AuditLog /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute adminOnly><Reports /></ProtectedRoute>} />
+        <Route path="profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       </Route>
-      <Route path="*" element={<Navigate to="/" />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }

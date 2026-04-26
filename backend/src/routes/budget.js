@@ -11,8 +11,8 @@ router.get('/', requireAuth, (req, res) => {
 
   const budget = db.prepare('SELECT * FROM budget WHERE fiscal_year=? ORDER BY id DESC LIMIT 1').get(fy);
   const approvedTotal = db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM expenses WHERE status='approved' AND fiscal_year=?").get(fy).total;
-  const pendingCount = db.prepare("SELECT COUNT(*) as c FROM expenses WHERE status='pending'").get().c;
-  const pendingTotal = db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM expenses WHERE status='pending'").get().total;
+  const pendingCount = db.prepare("SELECT COUNT(*) as c FROM expenses WHERE status='pending' AND fiscal_year=?").get(fy).c;
+  const pendingTotal = db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM expenses WHERE status='pending' AND fiscal_year=?").get(fy).total;
 
   const byCategory = db.prepare(`
     SELECT category, COALESCE(SUM(amount),0) as total, COUNT(*) as count
@@ -38,7 +38,18 @@ router.get('/', requireAuth, (req, res) => {
     GROUP BY month
   `).all(fy);
 
+  // Get planned/unplanned breakdown for approved expenses
+  const typeRows = db.prepare(`
+    SELECT strftime('%Y-%m', date) as month,
+           COALESCE(SUM(CASE WHEN expense_type='planned' THEN amount ELSE 0 END),0) as planned,
+           COALESCE(SUM(CASE WHEN expense_type='unplanned' THEN amount ELSE 0 END),0) as unplanned,
+           COALESCE(SUM(CASE WHEN expense_type IS NULL THEN amount ELSE 0 END),0) as unclassified
+    FROM expenses WHERE status='approved' AND fiscal_year=?
+    GROUP BY month
+  `).all(fy);
+
   const monthMap = Object.fromEntries(rows.map(r => [r.month, r]));
+  const typeMap = Object.fromEntries(typeRows.map(r => [r.month, r]));
 
   // Merge: all 12 FY months with data + cumulative running total
   let cumulative = 0;
@@ -47,6 +58,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const monthly = fyMonths.map(month => {
     const data = monthMap[month] || { approved: 0, rejected: 0, pending: 0, count: 0 };
+    const typeData = typeMap[month] || { planned: 0, unplanned: 0, unclassified: 0 };
     cumulative += data.approved;
     const isFuture = month > currentMonth;
     return {
@@ -55,6 +67,9 @@ router.get('/', requireAuth, (req, res) => {
       pending: data.pending,
       rejected: data.rejected,
       count: data.count,
+      planned: typeData.planned,
+      unplanned: typeData.unplanned,
+      unclassified: typeData.unclassified,
       cumulative: isFuture ? null : cumulative, // null for future months so line stops
       isFuture,
     };

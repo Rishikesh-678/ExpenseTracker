@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
-const { getDb } = require('../db/database');
+const { getDb, getActiveAdminCount } = require('../db/database');
 const { requireAuth } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 
@@ -30,12 +30,46 @@ router.post('/', requireAuth, requireRole('admin'), (req, res) => {
   res.status(201).json({ message: 'User created', userId: result.lastInsertRowid });
 });
 
+// Self-service password change (any authenticated user, own account only)
+router.put('/me/password', requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+  const db = getDb();
+  const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!bcrypt.compareSync(currentPassword, user.password_hash)) {
+    return res.status(401).json({ error: 'Current password is incorrect' });
+  }
+
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(newPassword, 10), req.user.id);
+  db.prepare('INSERT INTO audit_logs (actor_id,actor_name,action,target_type,target_id,details) VALUES (?,?,?,?,?,?)').run(
+    req.user.id, req.user.name, 'PASSWORD_CHANGED', 'user', req.user.id, JSON.stringify({ self_service: true })
+  );
+  res.json({ message: 'Password updated successfully' });
+});
+
 // Update user (Admin)
 router.put('/:id', requireAuth, requireRole('admin'), (req, res) => {
   const { name, role, is_active, password } = req.body;
   const db = getDb();
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const nextRole = role !== undefined ? role : user.role;
+  const nextIsActive = is_active !== undefined ? (is_active ? 1 : 0) : user.is_active;
+  const isCurrentlyActiveAdmin = user.role === 'admin' && user.is_active;
+  const willRemainActiveAdmin = nextRole === 'admin' && nextIsActive === 1;
+
+  if (isCurrentlyActiveAdmin && !willRemainActiveAdmin && getActiveAdminCount(db) <= 1) {
+    return res.status(400).json({ error: 'At least one active admin account must remain' });
+  }
+
   if (parseInt(req.params.id) === req.user.id && role && role !== 'admin') {
     return res.status(400).json({ error: 'Cannot demote your own admin account' });
   }
@@ -63,6 +97,11 @@ router.delete('/:id', requireAuth, requireRole('admin'), (req, res) => {
   const db = getDb();
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (user.role === 'admin' && user.is_active && getActiveAdminCount(db) <= 1) {
+    return res.status(400).json({ error: 'At least one active admin account must remain' });
+  }
+
   db.prepare('UPDATE users SET is_active=0 WHERE id=?').run(req.params.id);
   db.prepare('INSERT INTO audit_logs (actor_id,actor_name,action,target_type,target_id,details) VALUES (?,?,?,?,?,?)').run(
     req.user.id, req.user.name, 'USER_DEACTIVATED', 'user', req.params.id, JSON.stringify({ email: user.email })

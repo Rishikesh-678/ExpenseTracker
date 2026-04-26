@@ -29,8 +29,11 @@ export const expensesApi = {
   list: (params) => api.get('/expenses', { params }),
   get: (id) => api.get(`/expenses/${id}`),
   submit: (formData) => api.post('/expenses', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
-  approve: (id) => api.put(`/expenses/${id}/approve`),
+  requestUpdate: (id, formData) => api.post(`/expenses/${id}/update-request`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  approve: (id, expense_type) => api.put(`/expenses/${id}/approve`, { expense_type }),
   reject: (id, reason) => api.put(`/expenses/${id}/reject`, { reason }),
+  approveUpdateRequest: (id, expense_type) => api.put(`/expenses/update-requests/${id}/approve`, { expense_type }),
+  rejectUpdateRequest: (id, reason) => api.put(`/expenses/update-requests/${id}/reject`, { reason }),
 };
 
 export const categoriesApi = {
@@ -47,6 +50,7 @@ export const usersApi = {
   list: () => api.get('/users'),
   create: (data) => api.post('/users', data),
   update: (id, data) => api.put(`/users/${id}`, data),
+  changePassword: (data) => api.put('/users/me/password', data),
   remove: (id) => api.delete(`/users/${id}`),
 };
 

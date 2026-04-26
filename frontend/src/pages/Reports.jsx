@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react';
-import { reportsApi, budgetApi } from '../api';
-
-const CATEGORIES = ['Hardware', 'Software License', 'Cloud Billing', 'Miscellaneous'];
+import { reportsApi, budgetApi, categoriesApi } from '../api';
 
 export default function Reports() {
   const [fyList, setFyList] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [filters, setFilters] = useState({ status: '', category: '', startDate: '', endDate: '', fiscal_year: '', format: 'csv' });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     budgetApi.get().then(r => setFyList(r.data.fyList || []));
+    categoriesApi.list().then(r => setCategories((r.data.categories || []).filter(c => c.is_active).map(c => c.name)));
   }, []);
 
   const handleExport = async () => {
@@ -58,7 +58,7 @@ export default function Reports() {
             <label>Category Filter</label>
             <select value={filters.category} onChange={e=>setFilters(p=>({...p,category:e.target.value}))}>
               <option value="">All Categories</option>
-              {CATEGORIES.map(c=><option key={c}>{c}</option>)}
+              {categories.map(c=><option key={c}>{c}</option>)}
             </select>
           </div>
           <div className="form-group">
