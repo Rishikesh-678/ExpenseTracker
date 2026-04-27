@@ -112,6 +112,17 @@ function initDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS category_budgets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fiscal_year TEXT NOT NULL,
+      category TEXT NOT NULL,
+      allocated_amount REAL NOT NULL DEFAULT 0,
+      updated_by INTEGER,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (updated_by) REFERENCES users(id),
+      UNIQUE(fiscal_year, category)
+    );
+
     CREATE TABLE IF NOT EXISTS expense_update_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       expense_id INTEGER NOT NULL,
@@ -151,6 +162,20 @@ function initDb() {
   try { database.exec(`ALTER TABLE expense_update_requests ADD COLUMN reference_link TEXT`); } catch (_) {}
   try { database.exec(`ALTER TABLE expense_update_requests ADD COLUMN business_line TEXT`); } catch (_) {}
   try { database.exec(`ALTER TABLE expense_update_requests ADD COLUMN project TEXT`); } catch (_) {}
+  try {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS category_budgets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fiscal_year TEXT NOT NULL,
+        category TEXT NOT NULL,
+        allocated_amount REAL NOT NULL DEFAULT 0,
+        updated_by INTEGER,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (updated_by) REFERENCES users(id),
+        UNIQUE(fiscal_year, category)
+      )
+    `);
+  } catch (_) {}
 
   // Create access_logs for existing DBs that don't have it yet
   try {

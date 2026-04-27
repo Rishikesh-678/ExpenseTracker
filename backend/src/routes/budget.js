@@ -14,11 +14,24 @@ router.get('/', requireAuth, (req, res) => {
   const pendingCount = db.prepare("SELECT COUNT(*) as c FROM expenses WHERE status='pending' AND fiscal_year=?").get(fy).c;
   const pendingTotal = db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM expenses WHERE status='pending' AND fiscal_year=?").get(fy).total;
 
-  const byCategory = db.prepare(`
+  const byCategoryRaw = db.prepare(`
     SELECT category, COALESCE(SUM(amount),0) as total, COUNT(*) as count
     FROM expenses WHERE status='approved' AND fiscal_year=?
     GROUP BY category
   `).all(fy);
+
+  const categoryBudgets = db.prepare('SELECT category, allocated_amount FROM category_budgets WHERE fiscal_year=?').all(fy);
+  const catBudgetMap = {};
+  categoryBudgets.forEach(cb => { catBudgetMap[cb.category] = cb.allocated_amount; });
+
+  // Merge spend with allocations; also include categories with allocation but no spend
+  const spendCats = new Set(byCategoryRaw.map(c => c.category));
+  const byCategory = byCategoryRaw.map(c => ({ ...c, allocated: catBudgetMap[c.category] || 0 }));
+  for (const cb of categoryBudgets) {
+    if (!spendCats.has(cb.category)) {
+      byCategory.push({ category: cb.category, total: 0, count: 0, allocated: cb.allocated_amount });
+    }
+  }
 
   // Build full 12-month FY series (Apr → Mar) always, fill zeros for missing months
   const startYear = parseInt(fy.replace('FY', '').split('-')[0]); // e.g. 2024
@@ -89,25 +102,45 @@ router.get('/', requireAuth, (req, res) => {
     byCategory,
     monthly,
     budgetUpdatedAt: budget ? budget.updated_at : null,
-    budgetNotes: budget ? budget.notes : null
+    budgetNotes: budget ? budget.notes : null,
+    categoryBudgets,
   });
 });
 
 
 // PUT /api/budget — admin sets budget for a FY
 router.put('/', requireAuth, requireRole('admin'), (req, res) => {
-  const { total_budget, notes, fiscal_year } = req.body;
+  const { total_budget, notes, fiscal_year, category_allocations } = req.body;
   if (!total_budget || isNaN(total_budget) || total_budget <= 0) {
     return res.status(400).json({ error: 'Valid budget amount required' });
   }
   const fy = fiscal_year || getCurrentFY();
   const db = getDb();
+
   db.prepare('INSERT INTO budget (total_budget,updated_by,fiscal_year,notes) VALUES (?,?,?,?)').run(
     parseFloat(total_budget), req.user.id, fy, notes || null
   );
+
+  if (Array.isArray(category_allocations)) {
+    const upsert = db.prepare(`
+      INSERT INTO category_budgets (fiscal_year, category, allocated_amount, updated_by)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(fiscal_year, category) DO UPDATE SET
+        allocated_amount = excluded.allocated_amount,
+        updated_by = excluded.updated_by,
+        updated_at = datetime('now')
+    `);
+    for (const ca of category_allocations) {
+      const amt = parseFloat(ca.amount);
+      if (ca.category && !isNaN(amt) && amt >= 0) {
+        upsert.run(fy, ca.category, amt, req.user.id);
+      }
+    }
+  }
+
   db.prepare('INSERT INTO audit_logs (actor_id,actor_name,action,target_type,details) VALUES (?,?,?,?,?)').run(
     req.user.id, req.user.name, 'BUDGET_SET', 'budget',
-    JSON.stringify({ amount: parseFloat(total_budget), fiscal_year: fy, notes })
+    JSON.stringify({ amount: parseFloat(total_budget), fiscal_year: fy, notes, category_allocations })
   );
   res.json({ message: 'Budget updated', total_budget: parseFloat(total_budget), fiscal_year: fy });
 });

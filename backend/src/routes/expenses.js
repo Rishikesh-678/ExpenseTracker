@@ -79,6 +79,29 @@ router.post('/', requireAuth, handleUpload, (req, res) => {
   if (validated.error) return res.status(400).json({ error: validated.error });
   const { category, description, amount, date, po_number, vendor_name, fiscal_year, reference_link, business_line, project } = validated.value;
 
+  const isAdminDirect = req.user.role === 'admin' && req.body.direct_add === 'true';
+  const expense_type = req.body.expense_type || null;
+
+  if (isAdminDirect) {
+    if (!expense_type || !['planned', 'unplanned'].includes(expense_type)) {
+      return res.status(400).json({ error: 'Expense type (planned or unplanned) is required for admin direct expense' });
+    }
+    const result = db.prepare(`
+      INSERT INTO expenses (user_id,category,description,amount,date,file_path,file_name,po_number,vendor_name,fiscal_year,reference_link,business_line,project,status,expense_type,reviewed_by,reviewed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,?,datetime('now'))
+    `).run(req.user.id, category, description, amount, date,
+      req.file ? req.file.filename : null,
+      req.file ? req.file.originalname : null,
+      po_number, vendor_name, fiscal_year, reference_link, business_line, project,
+      expense_type, req.user.id);
+
+    db.prepare('INSERT INTO audit_logs (actor_id,actor_name,action,target_type,target_id,details) VALUES (?,?,?,?,?,?)').run(
+      req.user.id, req.user.name, 'EXPENSE_SUBMITTED', 'expense', result.lastInsertRowid,
+      JSON.stringify({ category, description, amount, date, expense_type, direct_add: true, po_number: po_number || null, vendor_name: vendor_name || null })
+    );
+    return res.status(201).json({ message: 'Expense added and approved', expense: db.prepare('SELECT * FROM expenses WHERE id=?').get(result.lastInsertRowid) });
+  }
+
   const result = db.prepare(`
     INSERT INTO expenses (user_id,category,description,amount,date,file_path,file_name,po_number,vendor_name,fiscal_year,reference_link,business_line,project)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -408,18 +431,27 @@ router.get('/:id', requireAuth, (req, res) => {
 
 // Approve
 router.put('/:id/approve', requireAuth, requireRole('admin'), (req, res) => {
-  const { expense_type } = req.body;
+  const { expense_type, category } = req.body;
   const db = getDb();
   const expense = db.prepare('SELECT * FROM expenses WHERE id=?').get(req.params.id);
   if (!expense) return res.status(404).json({ error: 'Not found' });
   if (expense.status !== 'pending') return res.status(400).json({ error: 'Expense is not pending' });
 
-  db.prepare("UPDATE expenses SET status='approved',reviewed_by=?,reviewed_at=datetime('now'),expense_type=? WHERE id=?").run(req.user.id, expense_type || null, expense.id);
+  let approvedCategory = expense.category;
+  if (category && category !== expense.category) {
+    const validCat = db.prepare('SELECT id FROM categories WHERE name=? AND is_active=1').get(category);
+    if (!validCat) return res.status(400).json({ error: 'Invalid or inactive category' });
+    approvedCategory = category;
+  }
+
+  db.prepare("UPDATE expenses SET status='approved',reviewed_by=?,reviewed_at=datetime('now'),expense_type=?,category=? WHERE id=?")
+    .run(req.user.id, expense_type || null, approvedCategory, expense.id);
   db.prepare('INSERT INTO notifications (user_id,message,type,related_expense_id) VALUES (?,?,?,?)').run(
     expense.user_id, `Your expense "${expense.description}" (₹${expense.amount.toFixed(2)}) has been approved ✅`, 'success', expense.id
   );
   db.prepare('INSERT INTO audit_logs (actor_id,actor_name,action,target_type,target_id,details) VALUES (?,?,?,?,?,?)').run(
-    req.user.id, req.user.name, 'EXPENSE_APPROVED', 'expense', expense.id, JSON.stringify({ description: expense.description, amount: expense.amount, expense_type: expense_type || null })
+    req.user.id, req.user.name, 'EXPENSE_APPROVED', 'expense', expense.id,
+    JSON.stringify({ description: expense.description, amount: expense.amount, expense_type: expense_type || null, category: approvedCategory })
   );
   res.json({ message: 'Expense approved' });
 });

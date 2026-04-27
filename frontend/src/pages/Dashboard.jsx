@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { budgetApi } from '../api';
+import { budgetApi, categoriesApi } from '../api';
 import {
   PieChart, Pie, Cell, Tooltip, ComposedChart, Bar, Line,
   XAxis, YAxis, ResponsiveContainer, Legend, ReferenceLine, BarChart,
@@ -19,14 +19,38 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
   const [fy, setFy] = useState(fiscalYear);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [catAllocations, setCatAllocations] = useState({});
+
+  useEffect(() => {
+    categoriesApi.list().then(r => setCategories((r.data.categories || []).filter(c => c.is_active).map(c => c.name)));
+  }, []);
+
+  useEffect(() => {
+    budgetApi.get({ fy }).then(r => {
+      const map = {};
+      (r.data.categoryBudgets || []).forEach(cb => { map[cb.category] = cb.allocated_amount; });
+      setCatAllocations(map);
+    });
+  }, [fy]);
+
+  const totalAllocated = categories.reduce((sum, cat) => sum + (parseFloat(catAllocations[cat] || 0) || 0), 0);
+  const totalBudget = parseFloat(amount) || 0;
+  const overAllocated = totalBudget > 0 && totalAllocated > totalBudget;
+
   const handleSave = async () => {
     setLoading(true);
-    try { await onSave(amount, notes, fy); onClose(); } catch (e) { alert(e.response?.data?.error || 'Error'); }
+    try {
+      const category_allocations = categories.map(cat => ({ category: cat, amount: parseFloat(catAllocations[cat] || 0) || 0 }));
+      await onSave(amount, notes, fy, category_allocations);
+      onClose();
+    } catch (e) { alert(e.response?.data?.error || 'Error'); }
     finally { setLoading(false); }
   };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
         <h3 className="modal-title">Set Department Budget</h3>
         <div className="form-group" style={{ marginBottom: 14 }}>
           <label>Fiscal Year</label>
@@ -38,10 +62,37 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
           <label>Total Budget (INR)</label>
           <input type="number" min="1" value={amount} onChange={e => setAmount(e.target.value)} placeholder="5000000" />
         </div>
-        <div className="form-group">
+        <div className="form-group" style={{ marginBottom: 14 }}>
           <label>Notes (optional)</label>
           <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Approved by finance committee" rows={2} />
         </div>
+
+        {categories.length > 0 && (
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Category Allocations</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
+              Optionally split the budget across categories. Leave blank for no limit.
+            </div>
+            {categories.map(cat => (
+              <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <span style={{ flex: 1, fontSize: 13, color: 'var(--text2)' }}>{cat}</span>
+                <input
+                  type="number" min="0"
+                  value={catAllocations[cat] || ''}
+                  onChange={e => setCatAllocations(prev => ({ ...prev, [cat]: e.target.value }))}
+                  placeholder="₹ 0"
+                  style={{ width: 150, fontSize: 13 }}
+                />
+              </div>
+            ))}
+            <div style={{ marginTop: 10, fontSize: 12, padding: '8px 10px', borderRadius: 8, background: overAllocated ? 'rgba(239,68,68,.1)' : 'var(--bg2)', color: overAllocated ? 'var(--red)' : 'var(--text3)' }}>
+              {overAllocated ? '⚠️ ' : ''}Allocated: ₹{totalAllocated.toLocaleString('en-IN')}
+              {totalBudget > 0 && ` / Total: ₹${totalBudget.toLocaleString('en-IN')}`}
+              {overAllocated && ' — Exceeds total budget'}
+            </div>
+          </div>
+        )}
+
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={handleSave} disabled={loading}>{loading ? 'Saving…' : 'Save Budget'}</button>
@@ -408,22 +459,54 @@ export default function Dashboard() {
         <div className="table-card" style={{ marginTop: 20 }}>
           <div className="table-header"><span className="table-title">Category Breakdown · {fiscalYear}</span></div>
           <table>
-            <thead><tr><th>Category</th><th>Total Approved</th><th>Requests</th><th>% of Budget</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Total Approved</th>
+                <th>Allocated Budget</th>
+                <th>Category Usage</th>
+                <th>Requests</th>
+                <th>% of Total Budget</th>
+              </tr>
+            </thead>
             <tbody>
-              {byCategory.map(c => (
-                <tr key={c.category}>
-                  <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 10, height: 10, borderRadius: '50%', background: COLORS[c.category] || '#6366f1', display: 'inline-block' }} />{c.category}</span></td>
-                  <td style={{ fontWeight: 600 }}>{fmt(c.total)}</td>
-                  <td>{c.count}</td>
-                  <td>{totalBudget > 0 ? `${((c.total / totalBudget) * 100).toFixed(1)}%` : '—'}</td>
-                </tr>
-              ))}
+              {byCategory.map(c => {
+                const allocated = c.allocated || 0;
+                const catPct = allocated > 0 ? Math.round((c.total / allocated) * 100) : null;
+                const catColor = catPct === null ? 'var(--text3)' : catPct >= 95 ? 'var(--red)' : catPct >= 80 ? 'var(--yellow)' : 'var(--green)';
+                return (
+                  <tr key={c.category}>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: COLORS[c.category] || '#6366f1', display: 'inline-block' }} />
+                        {c.category}
+                      </span>
+                    </td>
+                    <td style={{ fontWeight: 600 }}>{fmt(c.total)}</td>
+                    <td style={{ color: allocated > 0 ? 'var(--text2)' : 'var(--text3)' }}>
+                      {allocated > 0 ? fmt(allocated) : <span style={{ fontSize: 12 }}>Not set</span>}
+                    </td>
+                    <td>
+                      {catPct !== null ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ flex: 1, height: 6, background: 'var(--bg2)', borderRadius: 3, minWidth: 60 }}>
+                            <div style={{ width: `${Math.min(catPct, 100)}%`, height: '100%', background: catColor, borderRadius: 3, transition: 'width .4s' }} />
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: catColor, whiteSpace: 'nowrap' }}>{catPct}%</span>
+                        </div>
+                      ) : <span style={{ fontSize: 12, color: 'var(--text3)' }}>—</span>}
+                    </td>
+                    <td>{c.count}</td>
+                    <td>{totalBudget > 0 ? `${((c.total / totalBudget) * 100).toFixed(1)}%` : '—'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      {showModal && <BudgetModal current={totalBudget} fiscalYear={currentFY} fyList={fyList} onClose={() => setShowModal(false)} onSave={async (a, n, fy) => { await budgetApi.update({ total_budget: a, notes: n, fiscal_year: fy }); load(selectedFY); }} />}
+      {showModal && <BudgetModal current={totalBudget} fiscalYear={currentFY} fyList={fyList} onClose={() => setShowModal(false)} onSave={async (a, n, fy, category_allocations) => { await budgetApi.update({ total_budget: a, notes: n, fiscal_year: fy, category_allocations }); load(selectedFY); }} />}
     </div>
   );
 }
