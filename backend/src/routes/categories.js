@@ -44,9 +44,6 @@ router.delete('/:id', requireAuth, requireRole('admin'), (req, res) => {
   const cat = db.prepare('SELECT * FROM categories WHERE id=?').get(req.params.id);
   if (!cat) return res.status(404).json({ error: 'Category not found' });
 
-  const defaults = ['Hardware', 'Software License', 'Cloud Billing', 'Miscellaneous'];
-  if (defaults.includes(cat.name)) return res.status(400).json({ error: 'Cannot remove default categories' });
-
   db.prepare('UPDATE categories SET is_active=0 WHERE id=?').run(cat.id);
   res.json({ message: 'Category deactivated' });
 });

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { budgetApi, categoriesApi } from '../api';
+import { useAuth } from '../context/AuthContext';
 import {
   PieChart, Pie, Cell, Tooltip, ComposedChart, Bar, Line,
   XAxis, YAxis, ResponsiveContainer, Legend, ReferenceLine, BarChart,
@@ -19,19 +20,19 @@ const fmtMonth = m => {
   return `${MONTH_NAMES[parseInt(mo) - 1]} '${y.slice(2)}`;
 };
 
-function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
-  const [amount, setAmount] = useState(current || '');
+function BudgetModal({ fiscalYear, fyList, isAdmin, onClose, onSave }) {
   const [fy, setFy] = useState(fiscalYear);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
-  const [categories, setCategories] = useState([]);
+  const [categories, setCategories] = useState([]); // [{id, name}]
   const [catAllocations, setCatAllocations] = useState({});
   const [newCatInput, setNewCatInput] = useState('');
   const [newCatErr, setNewCatErr] = useState('');
   const [addingCat, setAddingCat] = useState(false);
+  const [removingCat, setRemovingCat] = useState(null); // id of category being removed
 
   useEffect(() => {
-    categoriesApi.list().then(r => setCategories((r.data.categories || []).filter(c => c.is_active).map(c => c.name)));
+    categoriesApi.list().then(r => setCategories((r.data.categories || []).filter(c => c.is_active)));
   }, []);
 
   useEffect(() => {
@@ -42,30 +43,41 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
     });
   }, [fy]);
 
-  const totalAllocated = categories.reduce((sum, cat) => sum + (parseFloat(catAllocations[cat] || 0) || 0), 0);
-  const totalBudget = parseFloat(amount) || 0;
-  const overAllocated = totalBudget > 0 && totalAllocated > totalBudget;
+  const totalAllocated = categories.reduce((sum, cat) => sum + (parseFloat(catAllocations[cat.name] || 0) || 0), 0);
 
   const handleAddCat = async () => {
     const name = newCatInput.trim();
     if (!name) { setNewCatErr('Enter a category name'); return; }
     if (name.length > 50) { setNewCatErr('Max 50 characters'); return; }
-    if (categories.some(c => c.toLowerCase() === name.toLowerCase())) { setNewCatErr('Category already exists'); return; }
+    if (categories.some(c => c.name.toLowerCase() === name.toLowerCase())) { setNewCatErr('Category already exists'); return; }
     setAddingCat(true); setNewCatErr('');
     try {
-      await categoriesApi.create(name);
-      setCategories(prev => [...prev, name]);
+      const res = await categoriesApi.create(name);
+      setCategories(prev => [...prev, res.data.category]);
       setNewCatInput('');
     } catch (e) {
       setNewCatErr(e.response?.data?.error || 'Failed to add category');
     } finally { setAddingCat(false); }
   };
 
+  const handleRemoveCat = async (cat) => {
+    if (!window.confirm(`Remove category "${cat.name}"? This will hide it from future expenses.`)) return;
+    setRemovingCat(cat.id);
+    try {
+      await categoriesApi.remove(cat.id);
+      setCategories(prev => prev.filter(c => c.id !== cat.id));
+      setCatAllocations(prev => { const next = { ...prev }; delete next[cat.name]; return next; });
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to remove category');
+    } finally { setRemovingCat(null); }
+  };
+
   const handleSave = async () => {
+    if (totalAllocated <= 0) { alert('Please allocate budget to at least one category.'); return; }
     setLoading(true);
     try {
-      const category_allocations = categories.map(cat => ({ category: cat, amount: parseFloat(catAllocations[cat] || 0) || 0 }));
-      await onSave(amount, notes, fy, category_allocations);
+      const category_allocations = categories.map(cat => ({ category: cat.name, amount: parseFloat(catAllocations[cat.name] || 0) || 0 }));
+      await onSave(totalAllocated, notes, fy, category_allocations);
       onClose();
     } catch (e) { alert(e.response?.data?.error || 'Error'); }
     finally { setLoading(false); }
@@ -82,29 +94,36 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
           </select>
         </div>
         <div className="form-group" style={{ marginBottom: 14 }}>
-          <label>Total Budget (INR)</label>
-          <input type="number" min="1" value={amount} onChange={e => setAmount(e.target.value)} placeholder="5000000" />
-        </div>
-        <div className="form-group" style={{ marginBottom: 14 }}>
           <label>Notes (optional)</label>
           <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Approved by finance committee" rows={2} />
         </div>
 
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Category Allocations</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Category Budgets</div>
             <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
-              Optionally split the budget across categories. Leave blank for no limit.
+              Set a budget for each category. The total department budget is calculated automatically from these values.
             </div>
             {categories.map(cat => (
-              <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                <span style={{ flex: 1, fontSize: 13, color: 'var(--text2)' }}>{cat}</span>
+              <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <span style={{ flex: 1, fontSize: 13, color: 'var(--text2)' }}>{cat.name}</span>
                 <input
                   type="number" min="0"
-                  value={catAllocations[cat] || ''}
-                  onChange={e => setCatAllocations(prev => ({ ...prev, [cat]: e.target.value }))}
+                  value={catAllocations[cat.name] || ''}
+                  onChange={e => setCatAllocations(prev => ({ ...prev, [cat.name]: e.target.value }))}
                   placeholder="₹ 0"
-                  style={{ width: 150, fontSize: 13 }}
+                  style={{ width: 130, fontSize: 13 }}
                 />
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveCat(cat)}
+                    disabled={removingCat === cat.id}
+                    title="Remove category"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', padding: '2px 4px', fontSize: 16, lineHeight: 1, opacity: removingCat === cat.id ? 0.4 : 0.7 }}
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             ))}
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
@@ -125,10 +144,9 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
               </div>
               {newCatErr && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{newCatErr}</div>}
             </div>
-            <div style={{ marginTop: 10, fontSize: 12, padding: '8px 10px', borderRadius: 8, background: overAllocated ? 'rgba(239,68,68,.1)' : 'var(--bg2)', color: overAllocated ? 'var(--red)' : 'var(--text3)' }}>
-              {overAllocated ? '⚠️ ' : ''}Allocated: ₹{totalAllocated.toLocaleString('en-IN')}
-              {totalBudget > 0 && ` / Total: ₹${totalBudget.toLocaleString('en-IN')}`}
-              {overAllocated && ' — Exceeds total budget'}
+            <div style={{ marginTop: 10, fontSize: 12, padding: '8px 10px', borderRadius: 8, background: totalAllocated > 0 ? 'rgba(16,185,129,.1)' : 'var(--bg2)', color: totalAllocated > 0 ? 'var(--green)' : 'var(--text3)', fontWeight: 600 }}>
+              Total Budget: ₹{totalAllocated.toLocaleString('en-IN')}
+              <span style={{ fontWeight: 400, marginLeft: 6 }}>(sum of category budgets)</span>
             </div>
           </div>
 
@@ -227,6 +245,7 @@ export default function Dashboard() {
   const [spotlightMonth, setSpotlightMonth] = useState('');
 
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const load = (fy) => budgetApi.get(fy ? { fy } : {}).then(r => {
     setData(r.data);
     if (!selectedFY) setSelectedFY(r.data.currentFY);
@@ -570,7 +589,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {showModal && <BudgetModal current={totalBudget} fiscalYear={currentFY} fyList={fyList} onClose={() => setShowModal(false)} onSave={async (a, n, fy, category_allocations) => { await budgetApi.update({ total_budget: a, notes: n, fiscal_year: fy, category_allocations }); load(selectedFY); }} />}
+      {showModal && <BudgetModal fiscalYear={currentFY} fyList={fyList} isAdmin={isAdmin} onClose={() => setShowModal(false)} onSave={async (a, n, fy, category_allocations) => { await budgetApi.update({ total_budget: a, notes: n, fiscal_year: fy, category_allocations }); load(selectedFY); }} />}
     </div>
   );
 }

@@ -39,6 +39,7 @@ export const expensesApi = {
 export const categoriesApi = {
   list: () => api.get('/categories'),
   create: (name) => api.post('/categories', { name }),
+  remove: (id) => api.delete(`/categories/${id}`),
 };
 
 export const budgetApi = {

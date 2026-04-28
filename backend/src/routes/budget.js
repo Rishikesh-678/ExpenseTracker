@@ -131,39 +131,49 @@ router.get('/', requireAuth, (req, res) => {
 
 // PUT /api/budget — admin sets budget for a FY
 router.put('/', requireAuth, requireRole('admin'), (req, res) => {
-  const { total_budget, notes, fiscal_year, category_allocations } = req.body;
-  if (!total_budget || isNaN(total_budget) || total_budget <= 0) {
-    return res.status(400).json({ error: 'Valid budget amount required' });
+  const { notes, fiscal_year, category_allocations } = req.body;
+
+  if (!Array.isArray(category_allocations) || category_allocations.length === 0) {
+    return res.status(400).json({ error: 'At least one category allocation is required' });
   }
+
+  // Total budget is derived from category allocations
+  const total_budget = category_allocations.reduce((sum, ca) => {
+    const amt = parseFloat(ca.amount);
+    return sum + (isNaN(amt) || amt < 0 ? 0 : amt);
+  }, 0);
+
+  if (total_budget <= 0) {
+    return res.status(400).json({ error: 'Total budget must be greater than 0' });
+  }
+
   const fy = fiscal_year || getCurrentFY();
   const db = getDb();
 
   db.prepare('INSERT INTO budget (total_budget,updated_by,fiscal_year,notes) VALUES (?,?,?,?)').run(
-    parseFloat(total_budget), req.user.id, fy, notes || null
+    total_budget, req.user.id, fy, notes || null
   );
 
-  if (Array.isArray(category_allocations)) {
-    const upsert = db.prepare(`
-      INSERT INTO category_budgets (fiscal_year, category, allocated_amount, updated_by)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(fiscal_year, category) DO UPDATE SET
-        allocated_amount = excluded.allocated_amount,
-        updated_by = excluded.updated_by,
-        updated_at = datetime('now')
-    `);
-    for (const ca of category_allocations) {
-      const amt = parseFloat(ca.amount);
-      if (ca.category && !isNaN(amt) && amt >= 0) {
-        upsert.run(fy, ca.category, amt, req.user.id);
-      }
+  const upsert = db.prepare(`
+    INSERT INTO category_budgets (fiscal_year, category, allocated_amount, updated_by)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(fiscal_year, category) DO UPDATE SET
+      allocated_amount = excluded.allocated_amount,
+      updated_by = excluded.updated_by,
+      updated_at = datetime('now')
+  `);
+  for (const ca of category_allocations) {
+    const amt = parseFloat(ca.amount);
+    if (ca.category && !isNaN(amt) && amt >= 0) {
+      upsert.run(fy, ca.category, amt, req.user.id);
     }
   }
 
   db.prepare('INSERT INTO audit_logs (actor_id,actor_name,action,target_type,details) VALUES (?,?,?,?,?)').run(
     req.user.id, req.user.name, 'BUDGET_SET', 'budget',
-    JSON.stringify({ amount: parseFloat(total_budget), fiscal_year: fy, notes, category_allocations })
+    JSON.stringify({ total_budget, fiscal_year: fy, notes, category_allocations })
   );
-  res.json({ message: 'Budget updated', total_budget: parseFloat(total_budget), fiscal_year: fy });
+  res.json({ message: 'Budget updated', total_budget, fiscal_year: fy });
 });
 
 module.exports = router;
