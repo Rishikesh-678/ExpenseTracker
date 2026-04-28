@@ -90,6 +90,26 @@ router.get('/', requireAuth, (req, res) => {
 
   const fyList = getFYList();
 
+  // Find the single expense that first pushed each over-budget category over its limit
+  const tippingExpenseIds = [];
+  for (const cat of byCategory) {
+    if (cat.allocated > 0 && cat.total > cat.allocated) {
+      const catExpenses = db.prepare(`
+        SELECT id, amount FROM expenses
+        WHERE category=? AND status='approved' AND fiscal_year=?
+        ORDER BY COALESCE(reviewed_at, submitted_at) ASC, id ASC
+      `).all(cat.category, fy);
+      let running = 0;
+      for (const exp of catExpenses) {
+        running += exp.amount;
+        if (running > cat.allocated) {
+          tippingExpenseIds.push(exp.id);
+          break;
+        }
+      }
+    }
+  }
+
   res.json({
     fiscalYear: fy,
     currentFY: getCurrentFY(),
@@ -104,6 +124,7 @@ router.get('/', requireAuth, (req, res) => {
     budgetUpdatedAt: budget ? budget.updated_at : null,
     budgetNotes: budget ? budget.notes : null,
     categoryBudgets,
+    tippingExpenseIds,
   });
 });
 

@@ -143,11 +143,20 @@ function ApproveModal({ expense, onClose, onConfirm, categories, categoryBudgets
   );
 }
 
-function AdminAddExpenseModal({ onClose, onAdded, categories }) {
+function AdminAddExpenseModal({ onClose, onAdded, categories, categoryBudgets, byCategory }) {
   const [form, setForm] = useState({ category: categories[0] || '', description: '', amount: '', date: new Date().toISOString().split('T')[0], expense_type: 'planned', vendor_name: '', po_number: '', business_line: '', project: '', reference_link: '' });
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const fileRef = useRef();
+
+  const catBudget = categoryBudgets.find(cb => cb.category === form.category);
+  const catSpend = byCategory.find(c => c.category === form.category);
+  const allocated = catBudget?.allocated_amount || 0;
+  const spent = catSpend?.total || 0;
+  const enteredAmount = parseFloat(form.amount) || 0;
+  const wouldExceed = allocated > 0 && (spent + enteredAmount) > allocated;
+  const catPct = allocated > 0 ? Math.round((spent / allocated) * 100) : null;
+  const catColor = catPct === null ? 'var(--text3)' : catPct >= 100 ? 'var(--red)' : catPct >= 80 ? 'var(--yellow)' : 'var(--green)';
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -214,6 +223,27 @@ function AdminAddExpenseModal({ onClose, onAdded, categories }) {
             <input value={form.reference_link} onChange={e => set('reference_link', e.target.value)} placeholder="https://…" />
           </div>
         </div>
+
+        {/* Category budget status */}
+        {allocated > 0 && (
+          <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 10, background: wouldExceed ? 'rgba(239,68,68,.08)' : 'var(--bg2)', border: `1px solid ${wouldExceed ? 'rgba(239,68,68,.3)' : 'var(--border)'}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>
+              {form.category} Budget
+            </div>
+            <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+              <div><div style={{ fontSize: 11, color: 'var(--text3)' }}>Allocated</div><div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(allocated)}</div></div>
+              <div><div style={{ fontSize: 11, color: 'var(--text3)' }}>Spent</div><div style={{ fontSize: 14, fontWeight: 700, color: 'var(--green)' }}>{fmt(spent)}</div></div>
+              <div><div style={{ fontSize: 11, color: 'var(--text3)' }}>Remaining</div><div style={{ fontSize: 14, fontWeight: 700, color: (allocated - spent) < 0 ? 'var(--red)' : 'var(--text)' }}>{fmt(allocated - spent)}</div></div>
+            </div>
+            <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, marginBottom: 4 }}>
+              <div style={{ width: `${Math.min(catPct || 0, 100)}%`, height: '100%', background: catColor, borderRadius: 3, transition: 'width .3s' }} />
+            </div>
+            <div style={{ fontSize: 11, color: wouldExceed ? 'var(--red)' : catColor, fontWeight: 600 }}>
+              {catPct !== null ? `${catPct}% used` : ''}
+              {wouldExceed && enteredAmount > 0 && ` · ⚠️ This expense will exceed the category budget by ${fmt((spent + enteredAmount) - allocated)}`}
+            </div>
+          </div>
+        )}
 
         {/* Expense type */}
         <div className="form-group" style={{ marginBottom: 16 }}>
@@ -510,6 +540,8 @@ export default function Approvals() {
           onClose={() => setShowAddExpense(false)}
           onAdded={() => { load(); budgetApi.get().then(r => { setCategoryBudgets(r.data.categoryBudgets || []); setByCategory(r.data.byCategory || []); }); }}
           categories={categories}
+          categoryBudgets={categoryBudgets}
+          byCategory={byCategory}
         />
       )}
     </div>

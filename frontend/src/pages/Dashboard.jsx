@@ -6,7 +6,12 @@ import {
   XAxis, YAxis, ResponsiveContainer, Legend, ReferenceLine, BarChart,
 } from 'recharts';
 
-const COLORS = { Hardware: '#6366f1', 'Software License': '#10b981', 'Cloud Billing': '#3b82f6', Miscellaneous: '#f59e0b' };
+const COLOR_PALETTE = ['#6366f1','#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16','#a78bfa'];
+const getCategoryColor = name => {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return COLOR_PALETTE[Math.abs(h) % COLOR_PALETTE.length];
+};
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const fmtMonth = m => {
@@ -21,6 +26,9 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState([]);
   const [catAllocations, setCatAllocations] = useState({});
+  const [newCatInput, setNewCatInput] = useState('');
+  const [newCatErr, setNewCatErr] = useState('');
+  const [addingCat, setAddingCat] = useState(false);
 
   useEffect(() => {
     categoriesApi.list().then(r => setCategories((r.data.categories || []).filter(c => c.is_active).map(c => c.name)));
@@ -37,6 +45,21 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
   const totalAllocated = categories.reduce((sum, cat) => sum + (parseFloat(catAllocations[cat] || 0) || 0), 0);
   const totalBudget = parseFloat(amount) || 0;
   const overAllocated = totalBudget > 0 && totalAllocated > totalBudget;
+
+  const handleAddCat = async () => {
+    const name = newCatInput.trim();
+    if (!name) { setNewCatErr('Enter a category name'); return; }
+    if (name.length > 50) { setNewCatErr('Max 50 characters'); return; }
+    if (categories.some(c => c.toLowerCase() === name.toLowerCase())) { setNewCatErr('Category already exists'); return; }
+    setAddingCat(true); setNewCatErr('');
+    try {
+      await categoriesApi.create(name);
+      setCategories(prev => [...prev, name]);
+      setNewCatInput('');
+    } catch (e) {
+      setNewCatErr(e.response?.data?.error || 'Failed to add category');
+    } finally { setAddingCat(false); }
+  };
 
   const handleSave = async () => {
     setLoading(true);
@@ -67,8 +90,7 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
           <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Approved by finance committee" rows={2} />
         </div>
 
-        {categories.length > 0 && (
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Category Allocations</div>
             <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
               Optionally split the budget across categories. Leave blank for no limit.
@@ -85,13 +107,30 @@ function BudgetModal({ current, fiscalYear, fyList, onClose, onSave }) {
                 />
               </div>
             ))}
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text3)', marginBottom: 8 }}>Add new category</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  value={newCatInput}
+                  onChange={e => { setNewCatInput(e.target.value); setNewCatErr(''); }}
+                  onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddCat())}
+                  placeholder="e.g. Networking Equipment"
+                  maxLength={50}
+                  style={{ flex: 1, fontSize: 13 }}
+                />
+                <button type="button" className="btn btn-primary" onClick={handleAddCat} disabled={addingCat} style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
+                  {addingCat ? '…' : '+ Add'}
+                </button>
+              </div>
+              {newCatErr && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{newCatErr}</div>}
+            </div>
             <div style={{ marginTop: 10, fontSize: 12, padding: '8px 10px', borderRadius: 8, background: overAllocated ? 'rgba(239,68,68,.1)' : 'var(--bg2)', color: overAllocated ? 'var(--red)' : 'var(--text3)' }}>
               {overAllocated ? '⚠️ ' : ''}Allocated: ₹{totalAllocated.toLocaleString('en-IN')}
               {totalBudget > 0 && ` / Total: ₹${totalBudget.toLocaleString('en-IN')}`}
               {overAllocated && ' — Exceeds total budget'}
             </div>
           </div>
-        )}
 
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
@@ -278,6 +317,22 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Category-level budget warnings */}
+      {byCategory.filter(c => c.allocated > 0).map(c => {
+        const pct = Math.round((c.total / c.allocated) * 100);
+        if (pct < 80) return null;
+        const exceeded = pct >= 100;
+        return (
+          <div key={c.category} className={`alert-bar ${exceeded ? 'danger' : 'warning'}`} style={{ marginBottom: 8 }}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            {exceeded
+              ? <>🚨 <strong>{c.category}</strong> budget exceeded — spent {fmt(c.total)} of allocated {fmt(c.allocated)} ({pct}%)</>
+              : <>⚠️ <strong>{c.category}</strong> budget is at {pct}% — {fmt(c.allocated - c.total)} remaining of {fmt(c.allocated)}</>
+            }
+          </div>
+        );
+      })}
+
       <div className="cards-grid">
         <BudgetCard
           totalBudget={totalBudget}
@@ -312,7 +367,7 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height={240}>
               <PieChart>
                 <Pie data={byCategory} dataKey="total" nameKey="category" cx="50%" cy="50%" outerRadius={90} innerRadius={50} paddingAngle={3}>
-                  {byCategory.map(entry => <Cell key={entry.category} fill={COLORS[entry.category] || '#6366f1'} />)}
+                  {byCategory.map(entry => <Cell key={entry.category} fill={getCategoryColor(entry.category)} />)}
                 </Pie>
                 <Tooltip formatter={v => fmt(v)} contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
                 <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
@@ -464,6 +519,7 @@ export default function Dashboard() {
                 <th>Category</th>
                 <th>Total Approved</th>
                 <th>Allocated Budget</th>
+                <th>Remaining</th>
                 <th>Category Usage</th>
                 <th>Requests</th>
                 <th>% of Total Budget</th>
@@ -473,18 +529,26 @@ export default function Dashboard() {
               {byCategory.map(c => {
                 const allocated = c.allocated || 0;
                 const catPct = allocated > 0 ? Math.round((c.total / allocated) * 100) : null;
-                const catColor = catPct === null ? 'var(--text3)' : catPct >= 95 ? 'var(--red)' : catPct >= 80 ? 'var(--yellow)' : 'var(--green)';
+                const catColor = catPct === null ? 'var(--text3)' : catPct >= 100 ? 'var(--red)' : catPct >= 80 ? 'var(--yellow)' : 'var(--green)';
+                const catRemaining = allocated > 0 ? allocated - c.total : null;
+                const isExceeded = catPct !== null && catPct >= 100;
+                const isWarning = catPct !== null && catPct >= 80 && catPct < 100;
                 return (
-                  <tr key={c.category}>
+                  <tr key={c.category} style={{ background: isExceeded ? 'rgba(239,68,68,.04)' : isWarning ? 'rgba(245,158,11,.04)' : undefined }}>
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: COLORS[c.category] || '#6366f1', display: 'inline-block' }} />
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: getCategoryColor(c.category), display: 'inline-block' }} />
                         {c.category}
+                        {isExceeded && <span title="Budget exceeded" style={{ fontSize: 13 }}>🚨</span>}
+                        {isWarning && <span title="Near budget limit" style={{ fontSize: 13 }}>⚠️</span>}
                       </span>
                     </td>
                     <td style={{ fontWeight: 600 }}>{fmt(c.total)}</td>
                     <td style={{ color: allocated > 0 ? 'var(--text2)' : 'var(--text3)' }}>
                       {allocated > 0 ? fmt(allocated) : <span style={{ fontSize: 12 }}>Not set</span>}
+                    </td>
+                    <td style={{ color: catRemaining === null ? 'var(--text3)' : catRemaining < 0 ? 'var(--red)' : 'var(--text2)', fontWeight: catRemaining !== null ? 600 : 400 }}>
+                      {catRemaining === null ? '—' : catRemaining < 0 ? `−${fmt(Math.abs(catRemaining))}` : fmt(catRemaining)}
                     </td>
                     <td>
                       {catPct !== null ? (

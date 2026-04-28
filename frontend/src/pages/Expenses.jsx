@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { expensesApi, categoriesApi } from '../api';
+import { expensesApi, categoriesApi, budgetApi } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useNotif } from '../context/NotifContext';
 
 const fmt = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(n);
-const CUSTOM_KEY = '__custom__';
 
 const CAT_COLORS = {
   Hardware: { bg: 'rgba(59,130,246,.12)', color: '#3b82f6' },
@@ -20,9 +19,10 @@ function StatusBadge({ status }) {
 }
 
 // ── Expense Detail Drawer ──────────────────────────────────────────────────
-function ExpenseDrawer({ expense: e, onClose, isAdmin, onRequestUpdate }) {
+function ExpenseDrawer({ expense: e, onClose, isAdmin, onRequestUpdate, tippingExpenseIds = new Set() }) {
   if (!e) return null;
   const cs = catStyle(e.category);
+  const isTipping = tippingExpenseIds.has(e.id);
 
   const rows = [
     e.user_name   && { icon: '👤', label: 'Submitted By',  value: e.user_name },
@@ -77,6 +77,12 @@ function ExpenseDrawer({ expense: e, onClose, isAdmin, onRequestUpdate }) {
                 fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
                 background: cs.bg, color: cs.color,
               }}>{e.category}</span>
+              {isTipping && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12,
+                  background: 'rgba(239,68,68,.12)', color: 'var(--red)',
+                }}>🚨 Exceeded budget</span>
+              )}
               <StatusBadge status={e.status} />
               {e.expense_type && (
                 <span style={{
@@ -210,9 +216,17 @@ function UpdateExpenseModal({ expense, categories, loading, error, onClose, onSu
           <div className="form-grid">
             <div className="form-group">
               <label>Category *</label>
-              <select value={form.category} onChange={e => setForm(p => ({ ...p, category: e.target.value }))} required>
-                {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-              </select>
+              <input
+                type="text"
+                list="update-modal-categories"
+                value={form.category}
+                onChange={e => setForm(p => ({ ...p, category: e.target.value }))}
+                placeholder="e.g. Hardware, Software License…"
+                required
+              />
+              <datalist id="update-modal-categories">
+                {categories.map(c => <option key={c.id} value={c.name} />)}
+              </datalist>
             </div>
             <div className="form-group">
               <label>Amount (INR) *</label>
@@ -262,8 +276,9 @@ function UpdateExpenseModal({ expense, categories, loading, error, onClose, onSu
 }
 
 // ── Expense Card ───────────────────────────────────────────────────────────
-function ExpenseCard({ expense: e, isAdmin, onClick }) {
+function ExpenseCard({ expense: e, isAdmin, onClick, tippingExpenseIds = new Set() }) {
   const cs = catStyle(e.category);
+  const isTipping = tippingExpenseIds.has(e.id);
   return (
     <div
       onClick={() => onClick(e)}
@@ -278,14 +293,23 @@ function ExpenseCard({ expense: e, isAdmin, onClick }) {
     >
       <div style={{
         position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
-        background: cs.color, borderRadius: '14px 0 0 14px',
+        background: isTipping ? 'var(--red)' : cs.color,
+        borderRadius: '14px 0 0 14px',
       }} />
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{
-          fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
-          background: cs.bg, color: cs.color,
-        }}>{e.category}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{
+            fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
+            background: cs.bg, color: cs.color,
+          }}>{e.category}</span>
+          {isTipping && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12,
+              background: 'rgba(239,68,68,.12)', color: 'var(--red)',
+            }} title="This expense exceeded the category budget">🚨 Exceeded budget</span>
+          )}
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {e.expense_type && (
             <span style={{
@@ -383,10 +407,7 @@ export default function Expenses() {
   const [submitting, setSubmitting] = useState(false);
   const [categories, setCategories] = useState([]);
   const [form, setForm] = useState(emptyForm);
-  const [showCustom, setShowCustom] = useState(false);
-  const [customCatInput, setCustomCatInput] = useState('');
-  const [addingCat, setAddingCat] = useState(false);
-  const [catError, setCatError] = useState('');
+  const [tippingExpenseIds, setTippingExpenseIds] = useState(new Set());
   const [file, setFile] = useState(null);
   const [submitMsg, setSubmitMsg] = useState('');
   const [submitErr, setSubmitErr] = useState('');
@@ -409,6 +430,12 @@ export default function Expenses() {
 
   useEffect(() => { loadCategories(); }, []);
 
+  useEffect(() => {
+    budgetApi.get().then(r => {
+      setTippingExpenseIds(new Set(r.data.tippingExpenseIds || []));
+    }).catch(() => {});
+  }, []);
+
   const load = (pg = page) =>
     expensesApi.list({ ...filter, search: search || undefined, page: pg, limit: LIMIT })
       .then(r => { setExpenses(r.data.expenses); setTotal(r.data.total); })
@@ -423,32 +450,25 @@ export default function Expenses() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const handleCategoryChange = e => {
-    if (e.target.value === CUSTOM_KEY) { setShowCustom(true); setCatError(''); }
-    else { setShowCustom(false); setForm(p => ({ ...p, category: e.target.value })); }
-  };
-
-  const handleAddCategory = async () => {
-    const name = customCatInput.trim();
-    if (!name) { setCatError('Enter a category name'); return; }
-    if (name.length > 50) { setCatError('Max 50 characters'); return; }
-    setAddingCat(true); setCatError('');
-    try {
-      await categoriesApi.create(name);
-      await loadCategories();
-      setForm(p => ({ ...p, category: name }));
-      setShowCustom(false); setCustomCatInput('');
-    } catch (e) {
-      setCatError(e.response?.data?.error || 'Failed to add category');
-    } finally { setAddingCat(false); }
-  };
-
   const handleSubmit = async e => {
     e.preventDefault();
-    if (!form.category) { setSubmitErr('Please select a category'); return; }
+    const catName = form.category.trim();
+    if (!catName) { setSubmitErr('Please enter a category'); return; }
     setSubmitting(true); setSubmitMsg(''); setSubmitErr('');
+    const match = categories.find(c => c.name.toLowerCase() === catName.toLowerCase());
+    const finalCat = match ? match.name : catName;
+    if (!match) {
+      try {
+        await categoriesApi.create(finalCat);
+        await loadCategories();
+      } catch (err) {
+        setSubmitErr(err.response?.data?.error || 'Failed to create category');
+        setSubmitting(false);
+        return;
+      }
+    }
     const fd = new FormData();
-    Object.entries(form).forEach(([k, v]) => fd.append(k, v));
+    Object.entries({ ...form, category: finalCat }).forEach(([k, v]) => fd.append(k, v));
     if (file) fd.append('invoice', file);
     try {
       await expensesApi.submit(fd);
@@ -509,28 +529,18 @@ export default function Expenses() {
             <div className="form-grid">
               <div className="form-group">
                 <label>Category *</label>
-                <select value={showCustom ? CUSTOM_KEY : form.category} onChange={handleCategoryChange}>
-                  {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  <option disabled>──────────────</option>
-                  <option value={CUSTOM_KEY}>➕ Other (custom category)…</option>
-                </select>
-                {showCustom && (
-                  <div style={{ marginTop: 8, padding: 12, background: 'var(--bg2)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8, fontWeight: 600 }}>New category name</div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <input type="text" value={customCatInput} onChange={e => setCustomCatInput(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddCategory())}
-                        placeholder="e.g. Networking Equipment" maxLength={50} style={{ flex: 1 }} autoFocus />
-                      <button type="button" className="btn btn-primary" onClick={handleAddCategory} disabled={addingCat} style={{ whiteSpace: 'nowrap' }}>
-                        {addingCat ? '…' : 'Use this'}
-                      </button>
-                      <button type="button" className="btn btn-ghost" onClick={() => { setShowCustom(false); setCustomCatInput(''); setCatError(''); }}>
-                        Cancel
-                      </button>
-                    </div>
-                    {catError && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>{catError}</div>}
-                  </div>
-                )}
+                <input
+                  type="text"
+                  list="submit-expense-categories"
+                  value={form.category}
+                  onChange={e => setForm(p => ({ ...p, category: e.target.value }))}
+                  placeholder="e.g. Hardware, Software License…"
+                  maxLength={50}
+                  required
+                />
+                <datalist id="submit-expense-categories">
+                  {categories.map(c => <option key={c.id} value={c.name} />)}
+                </datalist>
               </div>
               <div className="form-group">
                 <label>Amount (INR) *</label>
@@ -590,7 +600,7 @@ export default function Expenses() {
               </div>
             </div>
             <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
-              <button type="submit" className="btn btn-primary" disabled={submitting || showCustom}>
+              <button type="submit" className="btn btn-primary" disabled={submitting}>
                 {submitting ? 'Submitting…' : 'Submit Expense'}
               </button>
             </div>
@@ -667,7 +677,7 @@ export default function Expenses() {
                 gap: 14,
               }}>
                 {expenses.map(e => (
-                  <ExpenseCard key={e.id} expense={e} isAdmin={isAdmin} onClick={setSelected} />
+                  <ExpenseCard key={e.id} expense={e} isAdmin={isAdmin} onClick={setSelected} tippingExpenseIds={tippingExpenseIds} />
                 ))}
               </div>
 
@@ -730,6 +740,7 @@ export default function Expenses() {
         expense={selected}
         onClose={() => setSelected(null)}
         isAdmin={isAdmin}
+        tippingExpenseIds={tippingExpenseIds}
         onRequestUpdate={expense => {
           setSelected(null);
           setUpdateErr('');
