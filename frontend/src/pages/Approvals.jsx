@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { expensesApi, categoriesApi, budgetApi } from '../api';
 import { useNotif } from '../context/NotifContext';
 
@@ -143,11 +143,98 @@ function ApproveModal({ expense, onClose, onConfirm, categories, categoryBudgets
   );
 }
 
+// ── Live Exchange Rate Hook ───────────────────────────────────────────────
+function useExchangeRate() {
+  const [rate, setRate] = useState(null);
+  const [rateTime, setRateTime] = useState(null);
+  const [rateErr, setRateErr] = useState(false);
+  const [rateLoading, setRateLoading] = useState(false);
+  const fetchRate = useCallback(async () => {
+    setRateLoading(true); setRateErr(false);
+    try {
+      const r = await fetch('https://open.er-api.com/v6/latest/USD');
+      const data = await r.json();
+      if (data.result === 'success' && data.rates?.INR) {
+        setRate(parseFloat(data.rates.INR.toFixed(4)));
+        setRateTime(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+      } else throw new Error('bad');
+    } catch { setRateErr(true); }
+    finally { setRateLoading(false); }
+  }, []);
+  useEffect(() => { fetchRate(); }, [fetchRate]);
+  return { rate, rateTime, rateErr, rateLoading, refetch: fetchRate };
+}
+
+// ── Currency Converter Widget ──────────────────────────────────────────────
+function CurrencyWidget({ inrValue, onChange, rate, rateTime, rateErr, rateLoading, onRefetch }) {
+  const [usdInput, setUsdInput] = useState('');
+  const [activeField, setActiveField] = useState('inr');
+
+  useEffect(() => { if (inrValue === '') setUsdInput(''); }, [inrValue]);
+
+  const handleInrChange = v => {
+    setActiveField('inr'); onChange(v);
+    if (rate && v) { const usd = parseFloat(v) / rate; setUsdInput(isNaN(usd) ? '' : usd.toFixed(2)); }
+    else setUsdInput('');
+  };
+  const handleUsdChange = v => {
+    setActiveField('usd'); setUsdInput(v);
+    if (rate && v) { const inr = parseFloat(v) * rate; onChange(isNaN(inr) ? '' : inr.toFixed(2)); }
+    else onChange('');
+  };
+
+  const rateLabel = rate
+    ? `1 USD = ₹${rate.toLocaleString('en-IN', { maximumFractionDigits: 2 })} · as of ${rateTime}`
+    : rateErr ? 'Rate unavailable — enter INR directly' : 'Fetching live rate…';
+
+  return (
+    <div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
+        padding: '6px 10px', borderRadius: 8,
+        background: rateErr ? 'rgba(239,68,68,.08)' : 'rgba(99,102,241,.08)',
+        border: `1px solid ${rateErr ? 'rgba(239,68,68,.25)' : 'rgba(99,102,241,.2)'}`,
+      }}>
+        <span style={{ fontSize: 14 }}>{rateErr ? '⚠️' : rate ? '💱' : '⏳'}</span>
+        <span style={{ fontSize: 11, color: rateErr ? 'var(--red)' : 'var(--accent2)', fontWeight: 500, flex: 1 }}>{rateLabel}</span>
+        {!rateLoading && (
+          <button type="button" onClick={onRefetch} title="Refresh rate"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>🔄</button>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'stretch', borderRadius: 8, overflow: 'hidden', border: `1.5px solid ${activeField === 'usd' ? 'var(--accent2)' : 'var(--border)'}`, background: 'var(--bg2)', transition: 'border-color .2s' }}>
+            <span style={{ padding: '0 10px', fontSize: 12, fontWeight: 700, color: 'var(--text3)', background: 'var(--card)', borderRight: '1px solid var(--border)', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>$ USD</span>
+            <input type="number" min="0.01" step="0.01" value={usdInput}
+              onChange={e => handleUsdChange(e.target.value)} onFocus={() => setActiveField('usd')}
+              placeholder="0.00" disabled={!rate}
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text)', padding: '9px 10px', fontSize: 13, opacity: rate ? 1 : 0.45 }} />
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 3, paddingLeft: 2 }}>USD amount</div>
+        </div>
+        <div style={{ color: 'var(--accent2)', fontSize: 16, fontWeight: 700, userSelect: 'none', flexShrink: 0 }}>⇌</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'stretch', borderRadius: 8, overflow: 'hidden', border: `1.5px solid ${activeField === 'inr' ? 'var(--green)' : 'var(--border)'}`, background: 'var(--bg2)', transition: 'border-color .2s' }}>
+            <span style={{ padding: '0 10px', fontSize: 12, fontWeight: 700, color: 'var(--text3)', background: 'var(--card)', borderRight: '1px solid var(--border)', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>₹ INR</span>
+            <input type="number" min="0.01" step="0.01" value={inrValue}
+              onChange={e => handleInrChange(e.target.value)} onFocus={() => setActiveField('inr')}
+              placeholder="0.00"
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text)', padding: '9px 10px', fontSize: 13 }} />
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 3, paddingLeft: 2 }}>INR amount (submitted) *</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdminAddExpenseModal({ onClose, onAdded, categories, categoryBudgets, byCategory }) {
   const [form, setForm] = useState({ category: categories[0] || '', description: '', amount: '', date: new Date().toISOString().split('T')[0], expense_type: 'planned', vendor_name: '', po_number: '', business_line: '', project: '', reference_link: '' });
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const fileRef = useRef();
+  const { rate, rateTime, rateErr, rateLoading, refetch: refetchRate } = useExchangeRate();
 
   const catBudget = categoryBudgets.find(cb => cb.category === form.category);
   const catSpend = byCategory.find(c => c.category === form.category);
@@ -167,7 +254,13 @@ function AdminAddExpenseModal({ onClose, onAdded, categories, categoryBudgets, b
     setLoading(true);
     try {
       const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => { if (v) fd.append(k, v); });
+      // Stamp exchange rate into description for auditability
+      let finalDescription = form.description;
+      if (rate && form.amount) {
+        const usdEquiv = (parseFloat(form.amount) / rate).toFixed(2);
+        finalDescription = `${form.description} [USD equivalent: $${usdEquiv} @ 1 USD = ₹${rate} on submission]`;
+      }
+      Object.entries({ ...form, description: finalDescription }).forEach(([k, v]) => { if (v) fd.append(k, v); });
       fd.append('direct_add', 'true');
       if (file) fd.append('invoice', file);
       await expensesApi.submit(fd);
@@ -179,7 +272,7 @@ function AdminAddExpenseModal({ onClose, onAdded, categories, categoryBudgets, b
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: 560, maxHeight: 'calc(100vh - 48px)', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <h3 className="modal-title">Add Expense (Admin Direct)</h3>
         <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 16 }}>Expense will be immediately approved and recorded against the budget.</p>
 
@@ -198,9 +291,17 @@ function AdminAddExpenseModal({ onClose, onAdded, categories, categoryBudgets, b
             <label>Description *</label>
             <input value={form.description} onChange={e => set('description', e.target.value)} placeholder="What was this expense for?" />
           </div>
-          <div className="form-group">
-            <label>Amount (INR) *</label>
-            <input type="number" min="0.01" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+            <label>Amount *</label>
+            <CurrencyWidget
+              inrValue={form.amount}
+              onChange={v => set('amount', v)}
+              rate={rate}
+              rateTime={rateTime}
+              rateErr={rateErr}
+              rateLoading={rateLoading}
+              onRefetch={refetchRate}
+            />
           </div>
           <div className="form-group">
             <label>Vendor Name</label>
@@ -210,7 +311,7 @@ function AdminAddExpenseModal({ onClose, onAdded, categories, categoryBudgets, b
             <label>PO Number</label>
             <input value={form.po_number} onChange={e => set('po_number', e.target.value)} placeholder="PO-XXXX" />
           </div>
-          <div className="form-group">
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
             <label>Business Line</label>
             <input value={form.business_line} onChange={e => set('business_line', e.target.value)} placeholder="e.g. Engineering" />
           </div>

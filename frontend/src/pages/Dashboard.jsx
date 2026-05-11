@@ -159,11 +159,14 @@ function BudgetModal({ fiscalYear, fyList, isAdmin, onClose, onSave }) {
   );
 }
 
-function BudgetCard({ totalBudget, approvedTotal, remaining, usedPct, alertLevel, fiscalYear, fmt }) {
+function BudgetCard({ totalBudget, approvedTotal, remaining, usedPct, alertLevel, fiscalYear, fmt, byCategory }) {
   const [expanded, setExpanded] = useState(false);
 
   const barColor = alertLevel === 'danger' ? 'var(--red)' : alertLevel === 'warning' ? 'var(--yellow)' : 'var(--green)';
   const remainColor = remaining < 0 ? 'var(--red)' : remaining < totalBudget * 0.2 ? 'var(--yellow)' : 'var(--green)';
+
+  // Only categories that have an allocation set
+  const allocatedCats = (byCategory || []).filter(c => c.allocated > 0);
 
   return (
     <div
@@ -228,6 +231,46 @@ function BudgetCard({ totalBudget, approvedTotal, remaining, usedPct, alertLevel
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                 <span style={{ fontSize: 10, color: 'var(--text3)' }}>₹0</span>
                 <span style={{ fontSize: 10, color: 'var(--text3)' }}>{fmt(totalBudget)}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Per-category remaining breakdown */}
+          {allocatedCats.length > 0 && (
+            <div style={{ marginTop: 6, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>
+                Remaining by Category
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                {allocatedCats.map(c => {
+                  const catRemaining = c.allocated - c.total;
+                  const catPct = Math.min(Math.round((c.total / c.allocated) * 100), 100);
+                  const exceeded = catRemaining < 0;
+                  const warn = !exceeded && catPct >= 80;
+                  const catColor = exceeded ? 'var(--red)' : warn ? 'var(--yellow)' : 'var(--green)';
+                  return (
+                    <div key={c.category}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600, maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {exceeded && '🚨 '}{warn && '⚠️ '}{c.category}
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: catColor, whiteSpace: 'nowrap' }}>
+                          {exceeded
+                            ? `−${fmt(Math.abs(catRemaining))} over`
+                            : `${fmt(catRemaining)} left`
+                          }
+                        </span>
+                      </div>
+                      <div style={{ height: 5, borderRadius: 3, background: 'var(--bg2)', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${catPct}%`, background: catColor, borderRadius: 3, transition: 'width .4s' }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                        <span style={{ fontSize: 10, color: 'var(--text3)' }}>spent {fmt(c.total)}</span>
+                        <span style={{ fontSize: 10, color: 'var(--text3)' }}>of {fmt(c.allocated)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -361,6 +404,7 @@ export default function Dashboard() {
           alertLevel={alertLevel}
           fiscalYear={fiscalYear}
           fmt={fmt}
+          byCategory={byCategory}
         />
         <div className="stat-card green" onClick={() => navigate('/expenses?status=approved')}
           style={{ cursor: 'pointer' }} title="View approved expenses">

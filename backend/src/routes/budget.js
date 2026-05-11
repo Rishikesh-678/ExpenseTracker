@@ -110,13 +110,34 @@ router.get('/', requireAuth, (req, res) => {
     }
   }
 
+  // Build a spend map by category for quick lookup
+  const spendMap = {};
+  for (const c of byCategory) { spendMap[c.category] = c.total; }
+
+  // Remaining = sum of max(0, allocated - spent) per category.
+  // This prevents a surplus in one category from masking an overrun in another.
+  const totalBudget = budget ? budget.total_budget : 0;
+  let remaining = 0;
+  if (budget) {
+    for (const cb of categoryBudgets) {
+      const spent = spendMap[cb.category] || 0;
+      remaining += Math.max(0, cb.allocated_amount - spent);
+    }
+    // If there are approved expenses in categories with no budget allocation,
+    // they reduce remaining proportionally (subtract from total budget headroom).
+    const unbudgetedSpend = byCategory
+      .filter(c => !catBudgetMap[c.category])
+      .reduce((s, c) => s + c.total, 0);
+    remaining = Math.max(0, remaining - unbudgetedSpend);
+  }
+
   res.json({
     fiscalYear: fy,
     currentFY: getCurrentFY(),
     fyList,
-    totalBudget: budget ? budget.total_budget : 0,
+    totalBudget,
     approvedTotal,
-    remaining: budget ? budget.total_budget - approvedTotal : 0,
+    remaining,
     pendingCount,
     pendingTotal,
     byCategory,
